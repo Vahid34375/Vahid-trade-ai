@@ -1,0 +1,134 @@
+
+import requests
+from datetime import datetime, timezone
+
+BASE_HEADERS = {
+    "User-Agent": "VahidTradeAI/1.0"
+}
+
+# Cryptocurrency markets
+CRYPTO_IDS = {
+    "bitcoin": "BTC",
+    "ethereum": "ETH"
+}
+
+# Global markets: stocks, forex, indices, commodities
+YAHOO_MARKETS = {
+    "stocks": ["AAPL", "MSFT", "NVDA"],
+    "forex": ["EURUSD=X", "GBPUSD=X", "USDJPY=X"],
+    "indices": ["^GSPC", "^IXIC", "^DJI"],
+    "commodities": ["GC=F", "SI=F", "CL=F"]
+}
+
+
+def get_crypto_data():
+    url = "https://api.coingecko.com/api/v3/simple/price"
+
+    params = {
+        "ids": ",".join(CRYPTO_IDS.keys()),
+        "vs_currencies": "usd",
+        "include_24hr_change": "true"
+    }
+
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            headers=BASE_HEADERS,
+            timeout=15
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        results = {}
+
+        for coin_id, symbol in CRYPTO_IDS.items():
+            if coin_id in data:
+                results[symbol] = {
+                    "price": data[coin_id].get("usd"),
+                    "change_24h": data[coin_id].get(
+                        "usd_24h_change"
+                    )
+                }
+
+        return results
+
+    except requests.RequestException as error:
+        return {"error": str(error)}
+
+
+def get_yahoo_data(symbol):
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        + requests.utils.quote(symbol, safe="")
+    )
+
+    params = {
+        "range": "5d",
+        "interval": "1h"
+    }
+
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            headers=BASE_HEADERS,
+            timeout=15
+        )
+        response.raise_for_status()
+
+        data = response.json()
+        result = data["chart"]["result"][0]
+        meta = result["meta"]
+
+        price = meta.get("regularMarketPrice")
+        previous = meta.get("chartPreviousClose")
+
+        change = None
+
+        if price is not None and previous:
+            change = ((price - previous) / previous) * 100
+
+        return {
+            "price": price,
+            "currency": meta.get("currency"),
+            "change_percent": change
+        }
+
+    except (requests.RequestException, KeyError,
+            IndexError, TypeError, ValueError) as error:
+        return {"error": str(error)}
+
+
+def get_all_markets():
+    market_data = {
+        "updated_at": datetime.now(
+            timezone.utc
+        ).isoformat(),
+        "crypto": get_crypto_data(),
+        "stocks": {},
+        "forex": {},
+        "indices": {},
+        "commodities": {}
+    }
+
+    for category, symbols in YAHOO_MARKETS.items():
+        for symbol in symbols:
+            market_data[category][symbol] = (
+                get_yahoo_data(symbol)
+            )
+
+    return market_data
+
+
+if __name__ == "__main__":
+    data = get_all_markets()
+
+    for category, values in data.items():
+        print(f"\n{category.upper()}")
+
+        if isinstance(values, dict):
+            for symbol, details in values.items():
+                print(symbol, details)
+        else:
+            print(values)
